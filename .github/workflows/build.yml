@@ -1,9 +1,14 @@
-name: Build Minecraft Bot
+name: Build Minecraft Bot v4
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to attach artifacts to (e.g. v4.0.0)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -18,6 +23,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
@@ -33,36 +39,15 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.0.0
-          name: "Prismarine Bot v3.0.0"
-          body: |
-            ## Prismarine Bot v3.0.0
-            ### Что нового:
-            - **Нативная поддержка Andy-4** — бот думает в формате, на котором обучена модель
-            - **Авто-выбор Andy-4** при запуске если установлена
-            - **Улучшен инвентарь** — категории, тултип, полоска прочности, цветовая разметка
-            - **AIBrain (ReAct-петля)** — бот сам думает каждые 10 секунд
-            - **Память действий** — не повторяет ошибки
-            - Новый логотип: призмариновый кристалл 🔷
-
-            ### Установка:
-            - Windows: скачай **.exe** и запусти
-            - Linux: скачай **.AppImage**, дай права `chmod +x` и запусти
-            - macOS: скачай **.dmg** и перетащи в Applications
-
-            ### Требования:
-            - [Ollama](https://ollama.com) должна быть установлена
-            - Рекомендуемая модель: `sweaterdog/andy-4`
+          tag_name: ${{ github.ref_name || inputs.tag }}
           files: dist-electron/*.exe
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: prizmarinbot-v2-windows
+          name: minecraft-bot-v4-windows
           path: dist-electron/*.exe
           retention-days: 30
 
@@ -75,6 +60,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Install system dependencies
         run: |
@@ -101,8 +87,7 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.0.0
-          name: "Prismarine Bot v3.0.0"
+          tag_name: ${{ github.ref_name || inputs.tag }}
           files: dist-electron/*.AppImage
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -110,7 +95,7 @@ jobs:
       - name: Upload artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: prizmarinbot-v2-linux
+          name: minecraft-bot-v4-linux
           path: dist-electron/*.AppImage
           retention-days: 30
 
@@ -123,6 +108,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
 
       - name: Install dependencies
         run: npm install
@@ -138,8 +124,7 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v3.0.0
-          name: "Prismarine Bot v3.0.0"
+          tag_name: ${{ github.ref_name || inputs.tag }}
           files: dist-electron/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -147,6 +132,6 @@ jobs:
       - name: Upload artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: prizmarinbot-v2-macos
+          name: minecraft-bot-v4-macos
           path: dist-electron/*.dmg
           retention-days: 30
