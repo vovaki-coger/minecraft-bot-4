@@ -321,12 +321,11 @@ class BotManager {
       instance.anarchyProtocol?.stop();
       instance.lobbyHandler?.stop();
       instance.lobbyHandler = null;
-      this.emit("bot:statusChanged", { botId, status: "offline", reason 
       if (instance._inventoryInterval) {
         clearInterval(instance._inventoryInterval);
         instance._inventoryInterval = null;
       }
-    });
+      this.emit("bot:statusChanged", { botId, status: "offline", reason });
       this._scheduleReconnect(instance);
     });
 
