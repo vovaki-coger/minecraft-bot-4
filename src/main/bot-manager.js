@@ -243,6 +243,23 @@ class BotManager {
       instance.stats.experience = bot.experience.level;
       this.emit("bot:statsUpdated", { botId, stats: instance.stats });
     });
+    // ── Inventory events ─────────────────────────────────────────────────────
+    const emitInv = () => this._emitInventory(instance, bot, botId);
+
+    bot.inventory.on("updateSlot", emitInv);
+    bot.on("playerCollect", emitInv);
+    bot.on("entityEquip", (entity) => {
+      if (entity === bot.entity) emitInv();
+    });
+    bot.on("heldItemChanged", emitInv);
+
+    // Принудительное обновление каждые 5 секунд (на случай если события не сработали)
+    instance._inventoryInterval = setInterval(emitInv, 5000);
+
+    // Первое обновление через 2 секунды после спавна
+    setTimeout(emitInv, 2000);
+
+
 
     // ── Chat event: сообщения от игроков ──────────────────────────────────
     bot.on("chat", async (username, message) => {
@@ -304,7 +321,12 @@ class BotManager {
       instance.anarchyProtocol?.stop();
       instance.lobbyHandler?.stop();
       instance.lobbyHandler = null;
-      this.emit("bot:statusChanged", { botId, status: "offline", reason });
+      this.emit("bot:statusChanged", { botId, status: "offline", reason 
+      if (instance._inventoryInterval) {
+        clearInterval(instance._inventoryInterval);
+        instance._inventoryInterval = null;
+      }
+    });
       this._scheduleReconnect(instance);
     });
 
@@ -485,6 +507,41 @@ class BotManager {
     }
     const reply = rawText.replace(/\{[\s\S]*?\}/g, "").trim().slice(0, 100);
     if (reply) this._sendBotChat(instance, reply);
+  }
+
+
+  _emitInventory(instance, bot, botId) {
+    try {
+      const items = bot.inventory.items();
+      const equipped = [
+        bot.inventory.slots[5],  // helmet
+        bot.inventory.slots[6],  // chestplate
+        bot.inventory.slots[7],  // leggings
+        bot.inventory.slots[8],  // boots
+        bot.entity?.heldItem,    // held
+      ].filter(Boolean);
+
+      const allItems = [...items];
+      for (const eq of equipped) {
+        if (eq && !allItems.find(i => i.slot === eq.slot)) allItems.push(eq);
+      }
+
+      const inventory = allItems.map(item => ({
+        slot: item.slot,
+        name: item.name,
+        count: item.count,
+        displayName: item.displayName || item.name.replace(/_/g, ' '),
+        durabilityUsed: item.durabilityUsed,
+        maxDurability: item.maxDurability,
+      }));
+
+      const hotbarSlot = bot.quickBarSlot ?? 0;
+      instance.stats.inventory = inventory;
+      instance.stats.hotbarSlot = hotbarSlot;
+      this.emit("bot:inventoryUpdated", { botId, inventory, hotbarSlot });
+    } catch (err) {
+      log.warn("[BotManager] _emitInventory error:", err.message);
+    }
   }
 
   _sendBotChat(instance, text) {
