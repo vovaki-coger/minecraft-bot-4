@@ -669,9 +669,6 @@ class AIBrain {
       this.memory.addMessage("user", `Результат действия ${action.tool}: ${result}`);
     }
   }
-}
-
-
   // ── Приватный запрос к ИИ без записи в Minecraft чат ──────────────
   async askPrivate(message) {
     try {
@@ -679,20 +676,16 @@ class AIBrain {
       const ctxMsg = this.isAndy4
         ? buildAndy4Context(this.bot, this.memory)
         : buildReActContext(this.bot, this.memory);
-
       const messages = sysPrompt ? [sysPrompt] : [];
       messages.push({ role: 'user', content: message + (ctxMsg ? '
 
-Текущий контекст мира:
-' + ctxMsg : '') });
-
+Контекст: ' + ctxMsg : '') });
       const result = await this.ollama.chat({
         model: this.config.aiModel || 'sweaterdog/andy-4',
         messages,
         stream: false,
         options: { temperature: 0.7, num_predict: 400 }
       });
-
       const text = result?.message?.content || result?.content || '';
       const clean = stripThinkBlocks(text);
       log.info('[AIBrain] Private response:', clean.slice(0, 100));
@@ -702,5 +695,7 @@ class AIBrain {
       return null;
     }
   }
+
+}
 
 module.exports = { AIBrain };
