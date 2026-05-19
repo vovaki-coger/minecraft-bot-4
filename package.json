@@ -1,6 +1,6 @@
 {
   "name": "@workspace/minecraft-bot-4",
-  "version": "4.0.2",
+  "version": "4.0.3",
   "description": "Призмарин бот v4 - LobbyHandler, двойной чат, исправленный авто-логин",
   "main": "src/main/index.js",
   "private": true,
@@ -96,7 +96,8 @@
           ]
         }
       ],
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "artifactName": "PrizmarinBot-Setup-${version}.${ext}"
     },
     "linux": {
       "target": [
@@ -108,7 +109,8 @@
         }
       ],
       "icon": "assets/icon.png",
-      "category": "Game"
+      "category": "Game",
+      "artifactName": "PrizmarinBot-${version}.${ext}"
     },
     "mac": {
       "target": [
@@ -121,13 +123,15 @@
         }
       ],
       "icon": "assets/icon.icns",
-      "category": "public.app-category.games"
+      "category": "public.app-category.games",
+      "artifactName": "PrizmarinBot-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    }
+    },
+    "artifactName": "PrizmarinBot-${version}-${arch}.${ext}"
   }
 }
