@@ -4,6 +4,7 @@ const { OllamaManager } = require("./ollama-manager");
 const { BotManager } = require("./bot-manager");
 const { CoordinatorServer } = require("./coordinator");
 const { ConfigManager } = require("./config-manager");
+const AnkaRecorder = require("./anka-recorder");
 const log = require("electron-log");
 
 log.initialize({ preload: true });
@@ -16,6 +17,7 @@ let ollamaManager = null;
 let botManager = null;
 let coordinatorServer = null;
 let configManager = null;
+let ankaRecorder = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -57,6 +59,7 @@ async function initialize() {
     if (mainWindow) mainWindow.webContents.send(event, data);
   });
 
+  ankaRecorder = new AnkaRecorder();
   setupIpcHandlers();
   await coordinatorServer.start();
 }
@@ -140,6 +143,20 @@ function setupIpcHandlers() {
     return result.filePaths[0] || null;
   });
 
+
+  // ── Рекордер анки ─────────────────────────────────────────────────────────
+  ipcMain.handle("anka:list", () => ankaRecorder.listProfiles());
+  ipcMain.handle("anka:startRecording", (_e, botId) => ankaRecorder.startRecording(botId));
+  ipcMain.handle("anka:addStep", (_e, botId, step) => ankaRecorder.addStep(botId, step));
+  ipcMain.handle("anka:stopRecording", (_e, botId, info) => ankaRecorder.stopRecording(botId, info));
+  ipcMain.handle("anka:cancelRecording", (_e, botId) => ankaRecorder.cancelRecording(botId));
+  ipcMain.handle("anka:getStepCount", (_e, botId) => ankaRecorder.getStepCount(botId));
+  ipcMain.handle("anka:delete", (_e, id) => ankaRecorder.deleteProfile(id));
+  ipcMain.handle("anka:play", async (_e, botId, profileId) => {
+    const profile = ankaRecorder.getProfile(profileId);
+    if (!profile) throw new Error("Профиль не найден");
+    return botManager.playAnkaProfile(botId, profile.steps);
+  });
   ipcMain.handle("shell:openExternal", (_e, url) => shell.openExternal(url));
 }
 
