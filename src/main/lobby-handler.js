@@ -1,32 +1,50 @@
 /**
- * LobbyHandler v4 — автовыбор анки/ранга в лобби через компас или NPC.
- *
- * Что умеет:
- *  1. Определяет что бот попал в лобби (по заголовку Title, scoreboard или чату)
- *  2. Кликает компас в инвентаре → открывается меню ранга
- *  3. Ищет NPC по имени и взаимодействует с ним
- *  4. Выбирает нужный слот в открывшемся GUI
+ * LobbyHandler v4.1 — автовыбор анки/ранга в лобби.
+ * Ключевые исправления:
+ *  - bot.clickWindow(slot, 0, 0) вместо window.click(slot) (правильный Mineflayer API)
+ *  - Парсинг JSON-заголовков окон (mineflayer передаёт JSON-строки)
+ *  - Надёжное определение окна выбора ранга
  */
 
 const log = require("electron-log");
 
-// Ключевые слова в Title/чате означающие что мы в лобби
 const LOBBY_KEYWORDS = [
   "lobby", "лобби", "hub", "хаб", "waiting", "ожидание",
   "select", "выбор", "choose", "rank", "ранг", "анка", "class",
 ];
 
-// Ключевые слова для сообщений о выборе класса/ранга
 const RANK_SELECT_KEYWORDS = [
   "выбери", "выберите", "select your", "choose your", "pick your",
   "class", "rank", "kit", "кит", "роль", "role", "анку", "анк",
+  "profession", "профессия", "класс",
 ];
 
-// NPC имена которые открывают меню ранга
 const RANK_NPC_NAMES = [
   "ранг", "rank", "class", "kit", "кит", "класс", "выбор", "select",
   "анка", "анк", "role", "роль", "профессия", "profession",
 ];
+
+/** Парсит заголовок окна из JSON-строки mineflayer → plain text */
+function parseWindowTitle(raw) {
+  if (!raw) return "";
+  try {
+    const obj = JSON.parse(raw);
+    if (typeof obj === "string") return obj;
+    // Рекурсивно собираем текст из chat component
+    function extract(o) {
+      if (!o) return "";
+      if (typeof o === "string") return o;
+      let t = o.text || o.translate || "";
+      if (Array.isArray(o.extra)) t += o.extra.map(extract).join("");
+      if (Array.isArray(o.with)) t += o.with.map(extract).join("");
+      return t;
+    }
+    return extract(obj);
+  } catch {
+    // Не JSON — возвращаем как есть
+    return String(raw);
+  }
+}
 
 class LobbyHandler {
   constructor(instance, emit) {
@@ -35,67 +53,55 @@ class LobbyHandler {
     this.inLobby = false;
     this.rankSelected = false;
     this.lobbyCheckTimer = null;
-    this.windowListener = null;
+    this._windowOpenHandler = null;
     this.config = instance.config.lobbyConfig || {};
   }
 
   start() {
     const { bot } = this.instance;
     if (!bot) return;
-
+    if (!this.config.enabled) {
+      log.info("[LobbyHandler] Disabled by config");
+      return;
+    }
     log.info("[LobbyHandler] Starting for bot", this.instance.id);
 
-    // Слушаем открытие окон (GUI от сервера)
-    this.windowListener = (window) => this._onWindowOpen(window);
-    bot.on("windowOpen", this.windowListener);
-
-    // Слушаем Title (крупный текст на экране)
+    this._windowOpenHandler = (window) => this._onWindowOpen(window);
+    bot.on("windowOpen", this._windowOpenHandler);
     bot.on("title", (text) => this._onTitle(text));
 
-    // Начинаем проверку лобби через 3 секунды после спавна
-    this.lobbyCheckTimer = setTimeout(() => {
-      this._checkAndHandleLobby();
-    }, 3000);
+    // Первая проверка через 3 секунды после спавна
+    this.lobbyCheckTimer = setTimeout(() => this._checkAndHandleLobby(), 3000);
   }
 
   stop() {
-    if (this.lobbyCheckTimer) {
-      clearTimeout(this.lobbyCheckTimer);
-      this.lobbyCheckTimer = null;
-    }
-    if (this.windowListener && this.instance.bot) {
-      this.instance.bot.removeListener("windowOpen", this.windowListener);
+    if (this.lobbyCheckTimer) { clearTimeout(this.lobbyCheckTimer); this.lobbyCheckTimer = null; }
+    if (this._windowOpenHandler && this.instance.bot) {
+      this.instance.bot.removeListener("windowOpen", this._windowOpenHandler);
     }
     log.info("[LobbyHandler] Stopped");
   }
 
   onChatMessage(message) {
     const lower = message.toLowerCase();
-
-    // Определяем лобби по сообщениям чата
-    if (LOBBY_KEYWORDS.some(k => lower.includes(k))) {
-      if (!this.inLobby) {
-        log.info("[LobbyHandler] Detected lobby via chat:", message);
-        this.inLobby = true;
-      }
+    if (LOBBY_KEYWORDS.some(k => lower.includes(k)) && !this.inLobby) {
+      log.info("[LobbyHandler] Lobby detected via chat:", message);
+      this.inLobby = true;
     }
-
-    // Проверяем нужно ли выбрать ранг
     if (RANK_SELECT_KEYWORDS.some(k => lower.includes(k)) && !this.rankSelected) {
-      log.info("[LobbyHandler] Rank selection prompt detected:", message);
+      log.info("[LobbyHandler] Rank prompt detected:", message);
       setTimeout(() => this._trySelectRank(), 1500);
     }
   }
 
   _onTitle(text) {
     if (!text) return;
-    const lower = text.toLowerCase();
+    const plain = parseWindowTitle(text);
+    const lower = plain.toLowerCase();
     if (LOBBY_KEYWORDS.some(k => lower.includes(k))) {
-      log.info("[LobbyHandler] Detected lobby via title:", text);
+      log.info("[LobbyHandler] Lobby detected via title:", plain);
       this.inLobby = true;
-      if (!this.rankSelected) {
-        setTimeout(() => this._trySelectRank(), 2000);
-      }
+      if (!this.rankSelected) setTimeout(() => this._trySelectRank(), 2000);
     }
   }
 
@@ -103,19 +109,20 @@ class LobbyHandler {
     const { bot } = this.instance;
     if (!bot?.entity) return;
 
-    // Проверяем наличие компаса в инвентаре (признак лобби на многих серверах)
-    const compass = bot.inventory?.items().find(i =>
-      i.name === "compass" || i.name === "clock"
-    );
-    if (compass && !this.rankSelected) {
-      log.info("[LobbyHandler] Found compass/clock in lobby inventory");
+    // Наличие компаса = признак лобби
+    const LOBBY_ITEMS = ["compass", "clock", "watch", "nether_star", "paper", "book"];
+    const allItems = [...(bot.inventory?.items() || [])];
+    for (let s = 36; s <= 44; s++) { const i = bot.inventory?.slots[s]; if (i) allItems.push(i); }
+    const lobbyItem = allItems.find(i => LOBBY_ITEMS.includes(i.name));
+
+    if (lobbyItem && !this.rankSelected) {
+      log.info("[LobbyHandler] Found lobby item:", lobbyItem.name);
       this.inLobby = true;
       await this._trySelectRank();
       return;
     }
 
-    // Проверяем NPC в радиусе
-    if (this.config.npcMode) {
+    if ((this.config.mode === "npc" || this.config.mode === "auto") && this.config.npcMode) {
       await this._tryFindAndClickNPC();
     }
   }
@@ -125,13 +132,12 @@ class LobbyHandler {
     const { bot } = this.instance;
     if (!bot?.entity) return;
 
-    const mode = this.config.mode || "compass";
+    const mode = this.config.mode || "auto";
 
     if (mode === "compass" || mode === "auto") {
-      const handled = await this._useCompass();
-      if (handled) return;
+      const ok = await this._useCompass();
+      if (ok) return;
     }
-
     if (mode === "npc" || mode === "auto") {
       await this._tryFindAndClickNPC();
     }
@@ -141,38 +147,27 @@ class LobbyHandler {
     const { bot } = this.instance;
     if (!bot?.entity) return false;
 
-    // Ищем компас или часы (часто используются вместо компаса)
-    const COMPASS_ITEMS = ["compass", "clock", "watch", "nether_star", "paper", "book"];
-    let compassItem = null;
-
-    for (const itemName of COMPASS_ITEMS) {
-      compassItem = bot.inventory?.items().find(i => i.name === itemName);
-      if (compassItem) break;
+    const COMPASS_NAMES = ["compass", "clock", "watch", "nether_star", "paper", "book"];
+    let item = null;
+    for (const name of COMPASS_NAMES) {
+      item = bot.inventory?.items().find(i => i.name === name);
+      if (item) break;
     }
-
-    if (!compassItem) {
-      // Проверяем хотбар (слоты 36-44)
-      for (let slot = 36; slot <= 44; slot++) {
-        const item = bot.inventory?.slots[slot];
-        if (item && COMPASS_ITEMS.includes(item.name)) {
-          compassItem = item;
-          break;
-        }
+    if (!item) {
+      for (let s = 36; s <= 44; s++) {
+        const si = bot.inventory?.slots[s];
+        if (si && COMPASS_NAMES.includes(si.name)) { item = si; break; }
       }
     }
-
-    if (!compassItem) {
-      log.info("[LobbyHandler] No compass/special item found in inventory");
-      return false;
-    }
+    if (!item) { log.info("[LobbyHandler] No compass/clock found"); return false; }
 
     try {
-      log.info("[LobbyHandler] Using item:", compassItem.name);
-      await bot.equip(compassItem, "hand");
-      await new Promise(r => setTimeout(r, 500));
+      log.info("[LobbyHandler] Equipping and using:", item.name);
+      await bot.equip(item, "hand");
+      await new Promise(r => setTimeout(r, 600));
       await bot.activateItem();
-      await new Promise(r => setTimeout(r, 300));
-      log.info("[LobbyHandler] Activated compass/item");
+      await new Promise(r => setTimeout(r, 400));
+      log.info("[LobbyHandler] Compass activated — waiting for window");
       return true;
     } catch (err) {
       log.warn("[LobbyHandler] Error using compass:", err.message);
@@ -184,107 +179,102 @@ class LobbyHandler {
     const { bot } = this.instance;
     if (!bot?.entity) return;
 
-    // Ищем NPC по имени
     const entities = Object.values(bot.entities || {});
-    const npcEntity = entities.find(e => {
+    let npc = entities.find(e => {
       if (e === bot.entity) return false;
       const name = (e.displayName || e.name || e.username || "").toLowerCase();
       return RANK_NPC_NAMES.some(n => name.includes(n));
     });
 
-    if (!npcEntity) {
-      log.info("[LobbyHandler] No rank NPC found nearby");
-
-      // Если конкретный NPC не найден — пробуем ближайшего виллейджера
-      const villager = entities.find(e =>
+    // Фоллбэк на ближайшего виллейджера
+    if (!npc) {
+      npc = entities.find(e =>
         e !== bot.entity &&
-        e.name === "villager" &&
+        (e.name === "villager" || e.name === "npc") &&
         e.position?.distanceTo(bot.entity.position) < 20
       );
-
-      if (villager) {
-        log.info("[LobbyHandler] Trying nearest villager as rank NPC");
-        await this._interactWithEntity(villager);
-      }
-      return;
     }
 
-    log.info("[LobbyHandler] Found rank NPC:", npcEntity.displayName || npcEntity.name);
-    await this._interactWithEntity(npcEntity);
+    if (!npc) { log.info("[LobbyHandler] No NPC found"); return; }
+    log.info("[LobbyHandler] Found NPC:", npc.displayName || npc.name);
+    await this._interactWithEntity(npc);
   }
 
   async _interactWithEntity(entity) {
     const { bot } = this.instance;
     if (!bot?.entity || !entity?.position) return;
-
     try {
       const { goals } = require("mineflayer-pathfinder");
       const dist = entity.position.distanceTo(bot.entity.position);
-
-      // Подходим если далеко
       if (dist > 4) {
-        log.info("[LobbyHandler] Moving to NPC, distance:", dist);
+        log.info("[LobbyHandler] Moving to NPC, dist:", dist);
         await bot.pathfinder.goto(
           new goals.GoalNear(entity.position.x, entity.position.y, entity.position.z, 2)
         ).catch(() => {});
         await new Promise(r => setTimeout(r, 500));
       }
-
-      // Смотрим на NPC
       await bot.lookAt(entity.position.offset(0, 1, 0)).catch(() => {});
       await new Promise(r => setTimeout(r, 300));
-
-      // Кликаем по NPC
       await bot.useOn(entity).catch(() => {});
       log.info("[LobbyHandler] Interacted with NPC");
     } catch (err) {
-      log.warn("[LobbyHandler] Error interacting with entity:", err.message);
+      log.warn("[LobbyHandler] NPC interact error:", err.message);
     }
   }
 
   async _onWindowOpen(window) {
-    const title = window?.title || "";
+    const { bot } = this.instance;
+    if (!bot) return;
+
+    const rawTitle = window?.title || "";
+    const title = parseWindowTitle(rawTitle);
     const lower = title.toLowerCase();
 
-    log.info("[LobbyHandler] Window opened:", title, "slots:", window?.slots?.length);
+    log.info("[LobbyHandler] windowOpen:", title, "| slots:", window?.slots?.length);
 
-    // Проверяем что это окно выбора ранга/класса
-    const isRankWindow = RANK_SELECT_KEYWORDS.some(k => lower.includes(k)) ||
-      LOBBY_KEYWORDS.some(k => lower.includes(k));
+    // Проверяем заголовок — совпадает с кастомным?
+    const customTitle = (this.config.rankWindowTitle || "").toLowerCase();
+    if (customTitle && !lower.includes(customTitle)) return;
 
-    if (!isRankWindow && this.config.rankWindowTitle) {
-      // Проверяем кастомный заголовок из конфига
-      const customTitle = this.config.rankWindowTitle.toLowerCase();
-      if (!lower.includes(customTitle)) return;
-    }
+    // Без кастомного — проверяем по ключевым словам (или всё равно пробуем если мы в лобби)
+    const isRankWindow = customTitle ||
+      RANK_SELECT_KEYWORDS.some(k => lower.includes(k)) ||
+      LOBBY_KEYWORDS.some(k => lower.includes(k)) ||
+      this.inLobby;
 
-    if (!isRankWindow && !this.config.rankWindowTitle) {
-      // Если заголовок не совпадает — всё равно пробуем если мы в лобби
-      if (!this.inLobby) return;
-    }
+    if (!isRankWindow) return;
 
-    log.info("[LobbyHandler] Rank selection window detected!");
     this.rankSelected = true;
+    log.info("[LobbyHandler] Rank window detected:", title);
 
-    // Ждём немного для загрузки предметов в окне
+    // Ждём загрузки предметов в окне
     await new Promise(r => setTimeout(r, 800));
 
-    const slotIndex = this.config.rankSlot ?? 0; // слот по умолчанию 0
-    const targetRankName = this.config.rankName || null; // имя ранга если указано
+    // Убеждаемся что окно ещё открыто
+    if (!bot.currentWindow) {
+      log.warn("[LobbyHandler] Window closed before we could click");
+      return;
+    }
 
-    if (targetRankName && window.slots) {
-      // Ищем конкретный ранг по имени
-      const slot = window.slots.find(s =>
-        s && (s.customName || s.displayName || s.name || "")
-          .toLowerCase().includes(targetRankName.toLowerCase())
-      );
-      if (slot) {
-        log.info("[LobbyHandler] Found rank by name:", slot.customName || slot.name);
+    const slotIndex = this.config.rankSlot ?? 0;
+    const targetName = (this.config.rankName || "").toLowerCase();
+
+    // Ищем по имени если задано
+    if (targetName && bot.currentWindow.slots) {
+      const foundSlot = bot.currentWindow.slots.find((s, i) => {
+        if (!s) return false;
+        const name = (s.customName || s.displayName || s.name || "").toLowerCase();
+        return name.includes(targetName);
+      });
+      if (foundSlot) {
+        const clickSlot = foundSlot.slot ?? foundSlot.index ?? 0;
+        log.info("[LobbyHandler] Clicking by name:", foundSlot.displayName, "slot:", clickSlot);
         try {
-          await window.click(slot.slot ?? slot.index ?? 0);
-          this._emitRankSelected(slot.customName || slot.name);
+          // ✅ Правильный Mineflayer API: bot.clickWindow(slot, mouseButton, mode)
+          await bot.clickWindow(clickSlot, 0, 0);
+          this._emitRankSelected(foundSlot.displayName || foundSlot.name);
         } catch (err) {
-          log.warn("[LobbyHandler] Error clicking rank slot:", err.message);
+          log.warn("[LobbyHandler] clickWindow error:", err.message);
         }
         return;
       }
@@ -292,11 +282,13 @@ class LobbyHandler {
 
     // Кликаем по индексу слота
     try {
-      await window.click(slotIndex);
-      log.info("[LobbyHandler] Clicked rank slot:", slotIndex);
+      log.info("[LobbyHandler] Clicking slot by index:", slotIndex);
+      // ✅ bot.clickWindow(slot, 0, 0) — единственный правильный способ в Mineflayer
+      await bot.clickWindow(slotIndex, 0, 0);
       this._emitRankSelected("слот " + slotIndex);
     } catch (err) {
-      log.warn("[LobbyHandler] Error clicking slot:", err.message);
+      log.warn("[LobbyHandler] clickWindow error:", err.message);
+      this.rankSelected = false; // сбрасываем чтобы попробовать снова
     }
   }
 
