@@ -223,6 +223,15 @@ class BotManager {
 
       this.emit("bot:statusChanged", { botId, status: "online" });
       this._addChat(instance, "system", "✅ Бот подключился к серверу. ИИ-мозг активирован.");
+
+      // ── Inventory events — регистрируем ВНУТРИ spawn, когда bot.inventory готов ──
+      const emitInv = () => this._emitInventory(instance, bot, botId);
+      bot.inventory.on("updateSlot", emitInv);
+      bot.on("playerCollect", emitInv);
+      bot.on("entityEquip", (entity) => { if (entity === bot.entity) emitInv(); });
+      bot.on("heldItemChanged", emitInv);
+      instance._inventoryInterval = setInterval(emitInv, 5000);
+      setTimeout(emitInv, 2000);
     });
 
     bot.on("health", () => {
@@ -243,24 +252,6 @@ class BotManager {
       instance.stats.experience = bot.experience.level;
       this.emit("bot:statsUpdated", { botId, stats: instance.stats });
     });
-    // ── Inventory events ─────────────────────────────────────────────────────
-    const emitInv = () => this._emitInventory(instance, bot, botId);
-
-    bot.inventory.on("updateSlot", emitInv);
-    bot.on("playerCollect", emitInv);
-    bot.on("entityEquip", (entity) => {
-      if (entity === bot.entity) emitInv();
-    });
-    bot.on("heldItemChanged", emitInv);
-
-    // Принудительное обновление каждые 5 секунд (на случай если события не сработали)
-    instance._inventoryInterval = setInterval(emitInv, 5000);
-
-    // Первое обновление через 2 секунды после спавна
-    setTimeout(emitInv, 2000);
-
-
-
     // ── Chat event: сообщения от игроков ──────────────────────────────────
     bot.on("chat", async (username, message) => {
       if (username === bot.username) return;
