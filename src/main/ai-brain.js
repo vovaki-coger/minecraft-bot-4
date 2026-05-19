@@ -677,9 +677,7 @@ class AIBrain {
         ? buildAndy4Context(this.bot, this.memory)
         : buildReActContext(this.bot, this.memory);
       const messages = sysPrompt ? [sysPrompt] : [];
-      messages.push({ role: 'user', content: message + (ctxMsg ? '
-
-Контекст: ' + ctxMsg : '') });
+      messages.push({ role: 'user', content: message + (ctxMsg ? '\n\nКонтекст: ' + ctxMsg : '') });
       const result = await this.ollama.chat({
         model: this.config.aiModel || 'sweaterdog/andy-4',
         messages,
