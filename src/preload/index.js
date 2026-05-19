@@ -43,6 +43,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
     stopAnarchy: (id) => ipcRenderer.invoke("bot:stopAnarchy", id),
     getAnarchyState: (id) => ipcRenderer.invoke("bot:getAnarchyState", id),
   },
+  anka: {
+    list: () => ipcRenderer.invoke("anka:list"),
+    startRecording: (botId) => ipcRenderer.invoke("anka:startRecording", botId),
+    addStep: (botId, step) => ipcRenderer.invoke("anka:addStep", botId, step),
+    stopRecording: (botId, info) => ipcRenderer.invoke("anka:stopRecording", botId, info),
+    cancelRecording: (botId) => ipcRenderer.invoke("anka:cancelRecording", botId),
+    getStepCount: (botId) => ipcRenderer.invoke("anka:getStepCount", botId),
+    delete: (id) => ipcRenderer.invoke("anka:delete", id),
+    play: (botId, profileId) => ipcRenderer.invoke("anka:play", botId, profileId),
+  },
   proxy: {
     check: (proxy) => ipcRenderer.invoke("proxy:check", proxy),
   },
@@ -60,6 +70,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
       "bot:survivorStarted", "bot:survivorStopped", "bot:survivorLog",
       "bot:aiToggled", "bot:windowOpen", "bot:modelDetected",
       "bot:anarchyStarted", "bot:anarchyStopped", "bot:anarchyPhase", "bot:anarchyLog",
+      "bot:windowOpen", "bot:windowClose",
       "ollama:pullProgress",
       "coordinator:statusUpdate", "coordinator:taskAssigned", "coordinator:groupChat",
     ];
