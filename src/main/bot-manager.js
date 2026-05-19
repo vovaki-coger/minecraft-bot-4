@@ -320,6 +320,29 @@ class BotManager {
       this._scheduleReconnect(instance);
     });
 
+
+    // ── Окна инвентаря (для рекордера анки) ───────────────────────────────
+    bot.on("windowOpen", (window) => {
+      const rawTitle = window.title || "";
+      let title = rawTitle;
+      try { const p = JSON.parse(rawTitle); title = p.text || p.translate || rawTitle; } catch {}
+      const slots = [];
+      const count = window.inventoryStart || Math.min(window.slots.length, 54);
+      for (let i = 0; i < count; i++) {
+        const item = window.slots[i];
+        slots.push({
+          slot: i,
+          name: item ? item.name : "",
+          displayName: item ? (item.displayName || item.name.replace(/_/g, " ")) : "",
+          count: item ? item.count : 0,
+        });
+      }
+      this.emit("bot:windowOpen", { botId, window: { title, slots } });
+    });
+
+    bot.on("windowClose", () => {
+      this.emit("bot:windowClose", { botId });
+    });
     bot.on("error", (err) => {
       log.error("Bot " + botId + " error:", err.message);
       this.emit("bot:error", { botId, error: err.message });
@@ -812,5 +835,48 @@ class BotManager {
     for (const [botId] of this.bots) await this.disconnectBot(botId).catch(() => {});
   }
 }
+
+
+  // ── Воспроизведение анки ──────────────────────────────────────────────────
+  async playAnkaProfile(botId, steps) {
+    const instance = this.bots.get(botId);
+    if (!instance?.bot) throw new Error("Бот не подключён");
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      // Ждём нужное окно
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Окно не открылось (таймаут)")), 8000);
+        const checkNow = () => {
+          const w = instance.bot.currentWindow;
+          if (!w) return false;
+          let rawTitle = w.title || "";
+          let title = rawTitle;
+          try { const p = JSON.parse(rawTitle); title = p.text || p.translate || rawTitle; } catch {}
+          if (!step.windowTitle || title.includes(step.windowTitle) || step.windowTitle.includes(title) || title === "") {
+            clearTimeout(timeout);
+            resolve();
+            return true;
+          }
+          return false;
+        };
+        if (!checkNow()) {
+          const handler = () => { if (checkNow()) instance.bot.removeListener("windowOpen", handler); };
+          instance.bot.on("windowOpen", handler);
+        }
+      });
+
+      // Кликаем слот
+      if (instance.bot.currentWindow) {
+        await instance.bot.clickWindow(step.slot, step.button || 0, 0);
+        log.info("[AnkaPlay] Clicked slot", step.slot, "in window", step.windowTitle);
+      }
+
+      // Ждём паузу между кликами
+      const delay = Math.max(200, Math.min(step.delay || 500, 3000));
+      await new Promise(r => setTimeout(r, delay));
+    }
+    return { success: true };
+  }
 
 module.exports = { BotManager };
